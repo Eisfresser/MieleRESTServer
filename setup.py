@@ -167,15 +167,19 @@ def step1_provision_wifi():
     banner("Step 1: Provision WiFi")
     print(textwrap.dedent("""\
         Connect your computer to the Miele device's own access point
-        (SSID starting with "Miele@home") and obtain the Miele device's
-        IP address. You can find this IP via:
-          - The DHCP lease from the Miele device's built-in DHCP server, or
-          - The DHCP lease your own DHCP server (e.g. dnsmasq) assigned to it.
+        (SSID starting with "Miele@home").
 
-        See the README for detailed instructions.
+        The Miele appliance IS the access point, so its IP is typically
+        your default gateway. To find it:
+          - macOS/Linux:  ip route | grep default   (or: route -n get default)
+          - Windows:      ipconfig  (look for "Default Gateway")
+          - It is usually something like 192.168.0.1 or 192.168.1.1
+
+        Alternatively, if the Miele AP does not run DHCP, you can run your
+        own DHCP server (e.g. dnsmasq) and check which IP it assigns.
     """))
 
-    device_ip = prompt_ip("IP address of the Miele appliance (not your laptop)")
+    device_ip = prompt_ip("Miele appliance IP (typically your default gateway)")
     ssid = prompt("Target WiFi SSID (the network you want the appliance to join)")
     password = prompt("Target WiFi password")
     security = prompt("WiFi security type", default="WPA2")
@@ -260,9 +264,11 @@ def step2_provision_keys():
         Now connect your computer to the SAME WiFi network that you
         told the Miele appliance to join in step 1.
 
-        The Miele appliance will have a new IP on this network (assigned
-        by your home router's DHCP). Check your router's DHCP leases or
-        use a network scanner to find it.
+        The Miele appliance has a NEW IP on this network (different from
+        step 1!), assigned by your home router. To find it:
+          - Check your router's admin page for DHCP leases
+          - Use a network scanner:  nmap -sn 192.168.1.0/24
+          - Look for a device named "Miele" or a new/unknown host
     """))
 
     device_ip = prompt_ip("IP address of the Miele appliance on your home WiFi")
