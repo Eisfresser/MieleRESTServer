@@ -67,6 +67,13 @@ except ImportError:
         "Please run this script from the MieleRESTServer repository root."
     )
 
+# Optional: zeroconf for mDNS-based Miele device discovery
+try:
+    from zeroconf import ServiceBrowser, Zeroconf
+    HAS_ZEROCONF = True
+except ImportError:
+    HAS_ZEROCONF = False
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -190,6 +197,131 @@ def _probe_host(ip):
     return None
 
 
+def discover_miele_mdns(timeout=5.0):
+    """Discover Miele devices via mDNS (_mieleathome._tcp.local).
+
+    Returns a list of IP strings.  Requires the ``zeroconf`` package.
+    """
+    if not HAS_ZEROCONF:
+        return []
+
+    class _Listener:
+        def __init__(self):
+            self.found = []
+
+        def add_service(self, zc, stype, name):
+            info = zc.get_service_info(stype, name)
+            if info:
+                for addr in info.parsed_addresses():
+                    if addr not in self.found:
+                        self.found.append(addr)
+
+        def remove_service(self, zc, stype, name):
+            pass
+
+        def update_service(self, zc, stype, name):
+            pass
+
+    zc = Zeroconf()
+    listener = _Listener()
+    ServiceBrowser(zc, "_mieleathome._tcp.local.", listener)
+
+    import time
+    time.sleep(timeout)
+    zc.close()
+    return listener.found
+
+
+def probe_wifi_password(device_ip):
+    """Try to reach the Miele device's /WLAN endpoint to verify connectivity.
+
+    Tests both HTTP and HTTPS to determine which protocol the device speaks.
+    Returns the working scheme ('http' or 'https') or None.
+    """
+    for scheme in ("http", "https"):
+        try:
+            resp = requests.get(
+                f"{scheme}://{device_ip}/WLAN",
+                timeout=(2, 2),
+                verify=False,
+            )
+            if resp.status_code < 500:
+                return scheme
+        except requests.RequestException:
+            pass
+    return None
+
+
+def detect_miele_ap_password():
+    """Detect the correct WiFi password for the Miele access point.
+
+    Returns (password, explanation) tuple, or (None, explanation) on failure.
+
+    Two SSID/password patterns exist:
+      - SSID "Miele@home" (no suffix) -> password is "secured-by-tls"
+      - SSID "Miele@home-{suffix}" -> password is the device serial number
+    """
+    # We can detect which case we're in by checking the current SSID
+    ssid = _get_current_ssid()
+    if ssid is None:
+        return None, "Could not detect current SSID."
+    if ssid == "Miele@home":
+        return "secured-by-tls", (
+            f'Connected to "{ssid}" — password is "secured-by-tls".'
+        )
+    if ssid.startswith("Miele@home-"):
+        suffix = ssid[len("Miele@home-"):]
+        return None, (
+            f'Connected to "{ssid}" — the password is the device '
+            f"serial number (from the physical sticker on the appliance). "
+            f"The SSID suffix is \"{suffix}\"."
+        )
+    return None, f'Current SSID "{ssid}" does not look like a Miele AP.'
+
+
+def _get_current_ssid():
+    """Return the SSID of the currently connected WiFi network, or None."""
+    try:
+        system = platform.system()
+        if system == "Darwin":
+            # macOS 14.4+ uses the 'networksetup' approach; try airport first
+            try:
+                out = subprocess.check_output(
+                    ["/System/Library/PrivateFrameworks/Apple80211.framework/"
+                     "Versions/Current/Resources/airport", "-I"],
+                    text=True, stderr=subprocess.DEVNULL,
+                )
+                for line in out.splitlines():
+                    if " SSID:" in line:
+                        return line.split("SSID:")[-1].strip()
+            except Exception:
+                pass
+            # Fallback: networksetup
+            out = subprocess.check_output(
+                ["networksetup", "-getairportnetwork", "en0"],
+                text=True, stderr=subprocess.DEVNULL,
+            )
+            if "Current Wi-Fi Network:" in out:
+                return out.split("Current Wi-Fi Network:")[-1].strip()
+        elif system == "Linux":
+            out = subprocess.check_output(
+                ["iwgetid", "-r"],
+                text=True, stderr=subprocess.DEVNULL,
+            )
+            return out.strip() or None
+        elif system == "Windows":
+            out = subprocess.check_output(
+                ["netsh", "wlan", "show", "interfaces"],
+                text=True, stderr=subprocess.DEVNULL,
+            )
+            for line in out.splitlines():
+                if "SSID" in line and "BSSID" not in line:
+                    return line.split(":")[-1].strip()
+    except Exception:
+        pass
+    return None
+
+
 def scan_subnet(exclude=None):
     """Scan the local /24 for hosts with open HTTP/HTTPS ports.
 
@@ -233,6 +365,11 @@ def step0_reset_guidance():
 
         If the device is brand-new or has never been provisioned, you can
         skip this step.
+
+        IMPORTANT TIMING:
+        After a reset, the device takes ~90 seconds to boot its WiFi
+        module. It then opens its access point for only ~30 minutes.
+        Complete steps 1 and 2 within this window.
     """))
     prompt_yes_no("Have you reset the device (or is it new)?")
 
@@ -280,12 +417,29 @@ def step1_provision_wifi():
         Connect your computer to the Miele device's own access point
         (SSID starting with "Miele@home").
 
+        WiFi password for the Miele AP:
+          - SSID "Miele@home" (no suffix) -> password: secured-by-tls
+          - SSID "Miele@home-XXX"         -> password: device serial number
+                                             (from the sticker on the appliance)
+
+        REMINDER: The AP is only available for ~30 minutes after a reset.
+
         If the Miele device runs its own DHCP server, its IP is your
         default gateway. If you are running your own DHCP server
         (e.g. dnsmasq), the Miele's IP is whatever was assigned to it.
 
         The script will try to detect the device automatically.
     """))
+
+    # Try to detect which Miele AP SSID we're connected to and tell the user
+    # the correct password.
+    pw, explanation = detect_miele_ap_password()
+    if explanation:
+        print(f"  {explanation}")
+        if pw:
+            print(f"  -> AP password: {pw}\n")
+        else:
+            print()
 
     device_ip = None
 
@@ -325,6 +479,10 @@ def step1_provision_wifi():
     if ok:
         print("\n  WiFi provisioning sent successfully.")
         print("  The device should now disconnect its AP and join the target WiFi.")
+        print()
+        print("  TIP: Assign a static IP or DHCP reservation on your router for")
+        print("  the Miele device now. This prevents IP changes from breaking the")
+        print("  server configuration later.")
     else:
         print("\n  WARNING: Both HTTP and HTTPS attempts failed.")
         print("  Check the device IP and ensure you are connected to the Miele AP.")
@@ -344,48 +502,64 @@ def generate_keys():
     return MieleCrypto.MieleProvisioningInfo.generate_random()
 
 
+KEY_RETRIES = 2
+
+
 def provision_keys(device_ip, keys_json):
     """Upload cryptographic keys to the Miele device.
 
     Tries HTTP first, then HTTPS with the pairing auth header,
-    matching provision-key.sh behaviour.
+    matching provision-key.sh behaviour.  Each protocol is attempted
+    up to KEY_RETRIES times (devices can be flaky).
     Returns True if at least one attempt succeeds.
     """
+    import time
+
     success = False
 
-    # HTTP attempt
-    print(f"  Trying HTTP PUT http://{device_ip}/Security/Commissioning ...")
-    try:
-        resp = requests.put(
-            f"http://{device_ip}/Security/Commissioning",
-            data=keys_json,
-            headers={"Content-Type": "application/json"},
-            timeout=KEY_TIMEOUT,
-        )
-        print(f"    Response: {resp.status_code} {resp.text.strip()}")
-        if resp.status_code < 400:
-            success = True
-    except requests.RequestException as exc:
-        print(f"    Failed: {exc}")
+    # HTTP attempts
+    for attempt in range(1, KEY_RETRIES + 1):
+        print(f"  Trying HTTP PUT http://{device_ip}/Security/Commissioning "
+              f"(attempt {attempt}/{KEY_RETRIES}) ...")
+        try:
+            resp = requests.put(
+                f"http://{device_ip}/Security/Commissioning",
+                data=keys_json,
+                headers={"Content-Type": "application/json"},
+                timeout=KEY_TIMEOUT,
+            )
+            print(f"    Response: {resp.status_code} {resp.text.strip()}")
+            if resp.status_code < 400:
+                success = True
+                break
+        except requests.RequestException as exc:
+            print(f"    Failed: {exc}")
+        if attempt < KEY_RETRIES:
+            time.sleep(1)
 
-    # HTTPS attempt (with pairing header, no cert verification)
-    print(f"  Trying HTTPS PUT https://{device_ip}/Security/Commissioning ...")
-    try:
-        resp = requests.put(
-            f"https://{device_ip}/Security/Commissioning",
-            data=keys_json,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": "MielePairing:Pairing",
-            },
-            timeout=KEY_TIMEOUT,
-            verify=False,
-        )
-        print(f"    Response: {resp.status_code} {resp.text.strip()}")
-        if resp.status_code < 400:
-            success = True
-    except requests.RequestException as exc:
-        print(f"    Failed: {exc}")
+    # HTTPS attempts (with pairing header, no cert verification)
+    for attempt in range(1, KEY_RETRIES + 1):
+        print(f"  Trying HTTPS PUT https://{device_ip}/Security/Commissioning "
+              f"(attempt {attempt}/{KEY_RETRIES}) ...")
+        try:
+            resp = requests.put(
+                f"https://{device_ip}/Security/Commissioning",
+                data=keys_json,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": "MielePairing:Pairing",
+                },
+                timeout=KEY_TIMEOUT,
+                verify=False,
+            )
+            print(f"    Response: {resp.status_code} {resp.text.strip()}")
+            if resp.status_code < 400:
+                success = True
+                break
+        except requests.RequestException as exc:
+            print(f"    Failed: {exc}")
+        if attempt < KEY_RETRIES:
+            time.sleep(1)
 
     return success
 
@@ -400,25 +574,50 @@ def step2_provision_keys():
         step 1!), assigned by your home router.
     """))
 
-    # Auto-discover: scan the /24, excluding our own IP and the gateway
-    # (the gateway is the router, not the Miele device on this network).
-    gw = detect_default_gateway()
-    exclude = [gw] if gw else []
-    candidates = scan_subnet(exclude=exclude)
+    device_ip = None
 
-    if len(candidates) == 1:
-        print(f"  Found one device: {candidates[0]}")
-        device_ip = prompt_ip("Miele appliance IP", default=candidates[0])
-    elif candidates:
-        print(f"  Found {len(candidates)} device(s) with open HTTP/HTTPS ports:")
-        for i, ip in enumerate(candidates, 1):
-            print(f"    {i}) {ip}")
-        print()
-        device_ip = prompt_ip("Miele appliance IP (pick from above or enter manually)")
+    # Strategy 1: mDNS discovery (most precise — only finds Miele devices)
+    if HAS_ZEROCONF:
+        print("  Searching for Miele devices via mDNS (_mieleathome._tcp.local) ...")
+        mdns_results = discover_miele_mdns(timeout=5.0)
+        if mdns_results:
+            print(f"  Found {len(mdns_results)} Miele device(s) via mDNS:")
+            for i, ip in enumerate(mdns_results, 1):
+                print(f"    {i}) {ip}")
+            print()
+            if len(mdns_results) == 1:
+                device_ip = prompt_ip("Miele appliance IP", default=mdns_results[0])
+            else:
+                device_ip = prompt_ip(
+                    "Miele appliance IP (pick from above or enter manually)"
+                )
+        else:
+            print("  No Miele devices found via mDNS.")
     else:
-        print("  No devices found on the local subnet.")
-        print("  Enter the Miele appliance IP manually.")
-        device_ip = prompt_ip("Miele appliance IP")
+        print("  TIP: Install 'zeroconf' (pip install zeroconf) for precise")
+        print("  Miele device discovery via mDNS instead of a subnet scan.\n")
+
+    # Strategy 2: fall back to subnet scan
+    if device_ip is None:
+        gw = detect_default_gateway()
+        exclude = [gw] if gw else []
+        candidates = scan_subnet(exclude=exclude)
+
+        if len(candidates) == 1:
+            print(f"  Found one device: {candidates[0]}")
+            device_ip = prompt_ip("Miele appliance IP", default=candidates[0])
+        elif candidates:
+            print(f"  Found {len(candidates)} device(s) with open HTTP/HTTPS ports:")
+            for i, ip in enumerate(candidates, 1):
+                print(f"    {i}) {ip}")
+            print()
+            device_ip = prompt_ip(
+                "Miele appliance IP (pick from above or enter manually)"
+            )
+        else:
+            print("  No devices found on the local subnet.")
+            print("  Enter the Miele appliance IP manually.")
+            device_ip = prompt_ip("Miele appliance IP")
 
     info = generate_keys()
     keys_json = info.to_pairing_json()
@@ -578,6 +777,15 @@ def main():
     print("  Next steps:")
     print("    - Install the server (step 4): sudo ./install.sh")
     print("    - Test: http://{YOUR_SERVER_IP}:5001/generate-summary/")
+    print()
+    print("  FIREWALL RECOMMENDATION:")
+    print("    Miele devices phone home to ntp.mcs2.miele.com and other")
+    print("    Miele cloud endpoints. If you want to stay fully cloud-free,")
+    print("    block outbound internet traffic from the device on your router.")
+    print()
+    print("  SLEEP MODE:")
+    print("    Idle Miele devices enter sleep mode and may return stale data.")
+    print("    Use the /wakeup/<device_name> endpoint to wake them first.")
     print()
 
 

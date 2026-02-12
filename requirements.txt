@@ -4,3 +4,4 @@ flask_restful
 numpy
 PyYAML
 Requests
+zeroconf
