@@ -169,7 +169,16 @@ def detect_default_gateway():
 
 
 def get_local_ip():
-    """Get the local IP address of this machine on the current network."""
+    """Get the local IP address of this machine on the current network.
+    
+    This UDP socket trick seems to be the most reliable cross-platform method in pure Python. 
+    The alternatives all have problems:
+      - socket.gethostbyname(socket.gethostname()) — Often returns 127.0.0.1 on Linux (depends on /etc/hosts config). Unreliable.
+      - socket.getaddrinfo() — Same issue; it resolves the hostname, which may not map to the LAN interface.
+      - netifaces / psutil — Work well but are external dependencies. netifaces is also unmaintained.
+      - Parsing ifconfig/ip addr — Not portable across OSes, brittle.
+    """
+  
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.settimeout(0)
@@ -740,12 +749,12 @@ def main():
     print(textwrap.dedent("""\
 
         ╔══════════════════════════════════════════════════════════╗
-        ║         MieleRESTServer — Interactive Setup             ║
+        ║         MieleRESTServer — Interactive Device Setup       ║
         ╠══════════════════════════════════════════════════════════╣
-        ║  This script walks you through steps 0-3 of the README ║
-        ║  to set up your Miele device and server configuration.  ║
-        ║                                                         ║
-        ║  You can skip any step if you have already completed it.║
+        ║  This script walks you through steps 0-3 of the README   ║
+        ║  to set up your Miele device and server configuration.   ║
+        ║                                                          ║
+        ║  You can skip any step if you have already completed it. ║
         ╚══════════════════════════════════════════════════════════╝
     """))
 
@@ -773,21 +782,7 @@ def main():
     if prompt_yes_no("Run Step 3 (create server config)?"):
         step3_create_config(provisioned_devices)
 
-    banner("Setup Complete")
-    print("  Next steps:")
-    print("    - Install the server (step 4): sudo ./install.sh")
-    print("    - Test: http://{YOUR_SERVER_IP}:5001/generate-summary/")
-    print()
-    print("  FIREWALL RECOMMENDATION:")
-    print("    Miele devices phone home to ntp.mcs2.miele.com and other")
-    print("    Miele cloud endpoints. If you want to stay fully cloud-free,")
-    print("    block outbound internet traffic from the device on your router.")
-    print()
-    print("  SLEEP MODE:")
-    print("    Idle Miele devices enter sleep mode and may return stale data.")
-    print("    Use the /wakeup/<device_name> endpoint to wake them first.")
-    print()
-
+    banner("Miele device setup complete")
 
 if __name__ == "__main__":
     main()
