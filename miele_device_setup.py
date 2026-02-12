@@ -30,7 +30,7 @@ Guides the user through steps 0-3 of the README:
 Cross-platform: works on macOS, Linux, and Windows.
 
 Usage:
-    python setup.py
+    python miele_device_setup.py
 """
 
 import ipaddress

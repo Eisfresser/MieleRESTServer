@@ -18,7 +18,7 @@ cross-platform Python equivalents.
 
 ```
 pip install -r requirements.txt
-python setup.py
+python miele_device_setup.py
 ```
 
 The script will walk you through device reset guidance, WiFi provisioning,
