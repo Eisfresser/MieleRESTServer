@@ -280,17 +280,38 @@ def step1_provision_wifi():
         Connect your computer to the Miele device's own access point
         (SSID starting with "Miele@home").
 
-        The Miele appliance IS the access point, so its IP is your
-        default gateway.
+        If the Miele device runs its own DHCP server, its IP is your
+        default gateway. If you are running your own DHCP server
+        (e.g. dnsmasq), the Miele's IP is whatever was assigned to it.
+
+        The script will try to detect the device automatically.
     """))
 
+    device_ip = None
+
+    # Strategy 1: the Miele runs DHCP → it is the gateway.
     gw = detect_default_gateway()
     if gw:
         print(f"  Detected default gateway: {gw}")
         device_ip = prompt_ip("Miele appliance IP", default=gw)
     else:
-        print("  Could not auto-detect gateway. Enter the IP manually.")
-        device_ip = prompt_ip("Miele appliance IP")
+        # Strategy 2: user runs their own DHCP server (dnsmasq) →
+        # the Miele is the only other host on this point-to-point link.
+        print("  No default gateway detected (you may be running your own DHCP).")
+        print("  Scanning for the Miele device on the local subnet ...\n")
+        candidates = scan_subnet(exclude=[gw] if gw else [])
+        if len(candidates) == 1:
+            print(f"  Found one device: {candidates[0]}")
+            device_ip = prompt_ip("Miele appliance IP", default=candidates[0])
+        elif candidates:
+            print(f"  Found {len(candidates)} device(s):")
+            for i, ip in enumerate(candidates, 1):
+                print(f"    {i}) {ip}")
+            print()
+            device_ip = prompt_ip("Miele appliance IP (pick from above or enter manually)")
+        else:
+            print("  No devices found on the local subnet.")
+            device_ip = prompt_ip("Miele appliance IP")
     ssid = prompt("Target WiFi SSID (the network you want the appliance to join)")
     password = prompt("Target WiFi password")
     security = prompt("WiFi security type", default="WPA2")
