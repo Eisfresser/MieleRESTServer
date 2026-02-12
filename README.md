@@ -10,6 +10,26 @@ the Miele@home protocol, as Miele wants you to use its "cloud".
 
 ## Setup
 
+### Automated Setup (Recommended)
+
+An interactive setup script can guide you through steps 0-3. It works on
+macOS, Linux, and Windows, and replaces the shell-based helper scripts with
+cross-platform Python equivalents.
+
+```
+pip install -r requirements.txt
+python setup.py
+```
+
+The script will walk you through device reset guidance, WiFi provisioning,
+key generation and provisioning, and server configuration file creation.
+
+You can skip any step you have already completed.
+
+### Manual Setup
+
+The manual steps below are equivalent to what the setup script automates.
+
 ### 0) Resetting Miele device as needed
 
 These instructions assume that the device is a blank configuration, and is not
