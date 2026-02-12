@@ -167,14 +167,16 @@ def step1_provision_wifi():
     banner("Step 1: Provision WiFi")
     print(textwrap.dedent("""\
         Connect your computer to the Miele device's own access point
-        (SSID starting with "Miele@home") and obtain its IP address.
+        (SSID starting with "Miele@home") and obtain the Miele device's
+        IP address. You can find this IP via:
+          - The DHCP lease from the Miele device's built-in DHCP server, or
+          - The DHCP lease your own DHCP server (e.g. dnsmasq) assigned to it.
 
-        See the README for detailed instructions on connecting and
-        running DHCP if needed.
+        See the README for detailed instructions.
     """))
 
-    device_ip = prompt_ip("Miele device IP (on its own AP)")
-    ssid = prompt("Target WiFi SSID")
+    device_ip = prompt_ip("IP address of the Miele appliance (not your laptop)")
+    ssid = prompt("Target WiFi SSID (the network you want the appliance to join)")
     password = prompt("Target WiFi password")
     security = prompt("WiFi security type", default="WPA2")
 
@@ -255,11 +257,15 @@ def provision_keys(device_ip, keys_json):
 def step2_provision_keys():
     banner("Step 2: Provision Cryptographic Keys")
     print(textwrap.dedent("""\
-        Connect your computer to the SAME WiFi network as the Miele device
-        (the target WiFi you configured in step 1).
+        Now connect your computer to the SAME WiFi network that you
+        told the Miele appliance to join in step 1.
+
+        The Miele appliance will have a new IP on this network (assigned
+        by your home router's DHCP). Check your router's DHCP leases or
+        use a network scanner to find it.
     """))
 
-    device_ip = prompt_ip("Miele device IP (on the target WiFi)")
+    device_ip = prompt_ip("IP address of the Miele appliance on your home WiFi")
 
     info = generate_keys()
     keys_json = info.to_pairing_json()
@@ -321,7 +327,7 @@ def prompt_device_entry(defaults=None):
     """Interactively prompt for one device's configuration."""
     defaults = defaults or {}
     name = prompt("Device name (e.g. washer, dryer)")
-    host = defaults.get("ip") or prompt_ip("Device IP")
+    host = defaults.get("ip") or prompt_ip("IP address of the Miele appliance")
     group_id = defaults.get("groupId") or prompt("GroupID")
     group_key = defaults.get("groupKey") or prompt("GroupKey")
     route = prompt("Device route (12-digit serial, or 'auto')", default="auto")
