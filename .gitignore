@@ -3,3 +3,15 @@ venv_MieleRESTServer/
 dop2rs/target/
 dop2rs/Cargo.lock
 dop2rs/dop2marshal/target
+
+# macOS finder
+.DS_Store
+
+# uv
+.venv
+
+# claude
+.claude/
+
+# user's server config
+MieleRESTServer.config

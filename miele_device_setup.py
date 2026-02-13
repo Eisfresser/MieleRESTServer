@@ -27,11 +27,13 @@ Guides the user through steps 0-3 of the README:
   2) Provision cryptographic keys
   3) Generate the server configuration file
 
-Cross-platform: works on macOS, Linux, and Windows.
+Cross-platform: works on macOS, probably on Linux, possibly on Windows.
 
 Usage:
     python miele_device_setup.py
 """
+
+from __future__ import annotations
 
 import ipaddress
 import json
@@ -41,10 +43,11 @@ import subprocess
 import sys
 import textwrap
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any
 
 try:
     import requests
-    import requests.packages.urllib3
+    import requests.packages.urllib3  # type: ignore[import-untyped]
 except ImportError:
     sys.exit(
         "Missing dependency: requests\n"
@@ -69,7 +72,7 @@ except ImportError:
 
 # Optional: zeroconf for mDNS-based Miele device discovery
 try:
-    from zeroconf import ServiceBrowser, Zeroconf
+    from zeroconf import ServiceBrowser, ServiceListener, Zeroconf
     HAS_ZEROCONF = True
 except ImportError:
     HAS_ZEROCONF = False
@@ -79,7 +82,7 @@ except ImportError:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def prompt(message, default=None):
+def prompt(message: str, default: str | None = None) -> str:
     """Prompt the user for input, with an optional default value."""
     if default is not None:
         message = f"{message} [{default}]"
@@ -89,7 +92,7 @@ def prompt(message, default=None):
     return value
 
 
-def prompt_ip(message, default=None):
+def prompt_ip(message: str, default: str | None = None) -> str:
     """Prompt for a valid IPv4/IPv6 address, with optional default."""
     while True:
         raw = prompt(message, default=default)
@@ -100,7 +103,7 @@ def prompt_ip(message, default=None):
             print(f"  '{raw}' is not a valid IP address. Please try again.")
 
 
-def prompt_yes_no(message, default_yes=True):
+def prompt_yes_no(message: str, default_yes: bool = True) -> bool:
     """Prompt for a yes/no answer."""
     hint = "Y/n" if default_yes else "y/N"
     answer = input(f"{message} [{hint}]: ").strip().lower()
@@ -109,7 +112,7 @@ def prompt_yes_no(message, default_yes=True):
     return answer in ("y", "yes")
 
 
-def banner(text):
+def banner(text: str) -> None:
     """Print a section banner."""
     width = 60
     print()
@@ -126,7 +129,7 @@ def banner(text):
 SCAN_TIMEOUT = 0.5  # seconds per host
 
 
-def detect_default_gateway():
+def detect_default_gateway() -> str | None:
     """Try to detect the default gateway address. Returns IP string or None."""
     try:
         system = platform.system()
@@ -168,7 +171,7 @@ def detect_default_gateway():
     return None
 
 
-def get_local_ip():
+def get_local_ip() -> str | None:
     """Get the local IP address of this machine on the current network.
     
     This UDP socket trick seems to be the most reliable cross-platform method in pure Python. 
@@ -192,7 +195,7 @@ def get_local_ip():
         return None
 
 
-def _probe_host(ip):
+def _probe_host(ip: str) -> str | None:
     """Try to open a TCP connection on port 80 or 443. Returns ip or None."""
     for port in (80, 443):
         try:
@@ -206,7 +209,7 @@ def _probe_host(ip):
     return None
 
 
-def discover_miele_mdns(timeout=5.0):
+def discover_miele_mdns(timeout: float = 5.0) -> list[str]:
     """Discover Miele devices via mDNS (_mieleathome._tcp.local).
 
     Returns a list of IP strings.  Requires the ``zeroconf`` package.
@@ -214,21 +217,21 @@ def discover_miele_mdns(timeout=5.0):
     if not HAS_ZEROCONF:
         return []
 
-    class _Listener:
-        def __init__(self):
+    class _Listener(ServiceListener):
+        def __init__(self) -> None:
             self.found = []
 
-        def add_service(self, zc, stype, name):
+        def add_service(self, zc: Any, stype: str, name: str) -> None:
             info = zc.get_service_info(stype, name)
             if info:
                 for addr in info.parsed_addresses():
                     if addr not in self.found:
                         self.found.append(addr)
 
-        def remove_service(self, zc, stype, name):
+        def remove_service(self, zc: Any, stype: str, name: str) -> None:
             pass
 
-        def update_service(self, zc, stype, name):
+        def update_service(self, zc: Any, stype: str, name: str) -> None:
             pass
 
     zc = Zeroconf()
@@ -241,7 +244,7 @@ def discover_miele_mdns(timeout=5.0):
     return listener.found
 
 
-def probe_wifi_password(device_ip):
+def probe_wifi_password(device_ip: str) -> str | None:
     """Try to reach the Miele device's /WLAN endpoint to verify connectivity.
 
     Tests both HTTP and HTTPS to determine which protocol the device speaks.
@@ -261,7 +264,7 @@ def probe_wifi_password(device_ip):
     return None
 
 
-def detect_miele_ap_password():
+def detect_miele_ap_password() -> tuple[str | None, str]:
     """Detect the correct WiFi password for the Miele access point.
 
     Returns (password, explanation) tuple, or (None, explanation) on failure.
@@ -288,7 +291,7 @@ def detect_miele_ap_password():
     return None, f'Current SSID "{ssid}" does not look like a Miele AP.'
 
 
-def _get_current_ssid():
+def _get_current_ssid() -> str | None:
     """Return the SSID of the currently connected WiFi network, or None."""
     try:
         system = platform.system()
@@ -331,7 +334,7 @@ def _get_current_ssid():
     return None
 
 
-def scan_subnet(exclude=None):
+def scan_subnet(exclude: list[str] | None = None) -> list[str]:
     """Scan the local /24 for hosts with open HTTP/HTTPS ports.
 
     Returns a sorted list of IP strings.
@@ -340,11 +343,11 @@ def scan_subnet(exclude=None):
     if not local_ip or local_ip.startswith("127."):
         return []
 
-    exclude = set(exclude or [])
-    exclude.add(local_ip)
+    excluded: set[str] = set(exclude or [])
+    excluded.add(local_ip)
 
     network = ipaddress.IPv4Network(f"{local_ip}/24", strict=False)
-    hosts = [str(h) for h in network.hosts() if str(h) not in exclude]
+    hosts = [str(h) for h in network.hosts() if str(h) not in excluded]
 
     print(f"  Scanning {network} ({len(hosts)} hosts) ...")
 
@@ -364,7 +367,7 @@ def scan_subnet(exclude=None):
 # Step 0 – Reset guidance
 # ---------------------------------------------------------------------------
 
-def step0_reset_guidance():
+def step0_reset_guidance() -> None:
     banner("Step 0: Device Reset")
     print(textwrap.dedent("""\
         If your Miele device has previously been provisioned (steps 1-2),
@@ -390,7 +393,7 @@ def step0_reset_guidance():
 WIFI_TIMEOUT = (3, 3)  # (connect, read) in seconds
 
 
-def provision_wifi(device_ip, ssid, password, security="WPA2"):
+def provision_wifi(device_ip: str, ssid: str, password: str, security: str = "WPA2") -> bool:
     """Send WiFi credentials to the Miele device.
 
     Tries HTTP first, then HTTPS, matching provision-wifi.sh behaviour.
@@ -420,7 +423,7 @@ def provision_wifi(device_ip, ssid, password, security="WPA2"):
     return success
 
 
-def step1_provision_wifi():
+def step1_provision_wifi() -> bool:
     banner("Step 1: Provision WiFi")
     print(textwrap.dedent("""\
         Connect your computer to the Miele device's own access point
@@ -506,7 +509,7 @@ def step1_provision_wifi():
 KEY_TIMEOUT = (3, 3)
 
 
-def generate_keys():
+def generate_keys() -> Any:
     """Generate a random MieleProvisioningInfo and return it."""
     return MieleCrypto.MieleProvisioningInfo.generate_random()
 
@@ -514,7 +517,7 @@ def generate_keys():
 KEY_RETRIES = 2
 
 
-def provision_keys(device_ip, keys_json):
+def provision_keys(device_ip: str, keys_json: str) -> bool:
     """Upload cryptographic keys to the Miele device.
 
     Tries HTTP first, then HTTPS with the pairing auth header,
@@ -573,7 +576,7 @@ def provision_keys(device_ip, keys_json):
     return success
 
 
-def step2_provision_keys():
+def step2_provision_keys() -> dict[str, Any]:
     banner("Step 2: Provision Cryptographic Keys")
     print(textwrap.dedent("""\
         Now connect your computer to the SAME WiFi network that you
@@ -582,6 +585,14 @@ def step2_provision_keys():
         The Miele appliance has a NEW IP on this network (different from
         step 1!), assigned by your home router.
     """))
+
+    # Trigger any local firewall prompt early.  macOS firewalls (Little
+    # Snitch, LuLu, etc.) may ask the user to allow Python on first
+    # network access — doing this now avoids racing against scan timeouts.
+    print("  (Probing network — approve any firewall prompt that appears)\n")
+    _probe_host(detect_default_gateway() or "192.168.1.1")
+
+    prompt_yes_no("Are you connected to your home WiFi network?")
 
     device_ip = None
 
@@ -631,10 +642,10 @@ def step2_provision_keys():
     info = generate_keys()
     keys_json = info.to_pairing_json()
 
-    print(f"\n  Generated keys:")
+    print("\n  Generated keys:")
     print(f"    GroupID:  {info.groupid}")
     print(f"    GroupKey: {info.groupkey.hex().upper()}")
-    print(f"\n  Save these — you will need them for the server configuration.\n")
+    print("\n  Save these — you will need them for the server configuration.\n")
 
     requests.packages.urllib3.disable_warnings(
         requests.packages.urllib3.exceptions.InsecureRequestWarning
@@ -660,7 +671,7 @@ def step2_provision_keys():
 # Step 3 – Create server configuration
 # ---------------------------------------------------------------------------
 
-def build_device_entry(name, host, group_id, group_key, route="auto"):
+def build_device_entry(name: str, host: str, group_id: str, group_key: str, route: str = "auto") -> tuple[str, dict[str, str]]:
     """Build a single device entry for the config."""
     return (name, {
         "host": host,
@@ -670,7 +681,7 @@ def build_device_entry(name, host, group_id, group_key, route="auto"):
     })
 
 
-def write_config(path, devices):
+def write_config(path: str, devices: list[tuple[str, dict[str, str]]]) -> None:
     """Write the server configuration YAML file.
 
     devices: list of (name, dict) tuples.
@@ -684,7 +695,7 @@ def write_config(path, devices):
     print(f"\n  Configuration written to: {path}")
 
 
-def prompt_device_entry(defaults=None):
+def prompt_device_entry(defaults: dict[str, str] | None = None) -> tuple[str, dict[str, str]]:
     """Interactively prompt for one device's configuration."""
     defaults = defaults or {}
     name = prompt("Device name (e.g. washer, dryer)")
@@ -695,7 +706,7 @@ def prompt_device_entry(defaults=None):
     return build_device_entry(name, host, group_id, group_key, route)
 
 
-def step3_create_config(provisioned_devices=None):
+def step3_create_config(provisioned_devices: list[dict[str, Any]] | None = None) -> None:
     banner("Step 3: Create Server Configuration")
     provisioned_devices = provisioned_devices or []
 
@@ -745,7 +756,7 @@ def step3_create_config(provisioned_devices=None):
 # Main
 # ---------------------------------------------------------------------------
 
-def main():
+def main() -> None:
     print(textwrap.dedent("""\
 
         ╔══════════════════════════════════════════════════════════╗
