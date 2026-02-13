@@ -68,6 +68,7 @@ class MieleProvisioningInfo:
         return self.groupkey[0:32];
     def get_signature_key(self):
         return self.groupkey;
+    @staticmethod
     def generate_random():
         return MieleProvisioningInfo(groupid=secrets.token_hex(8), groupkey=secrets.token_hex(64))
     def to_dict(self):
