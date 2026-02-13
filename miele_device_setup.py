@@ -681,12 +681,28 @@ def build_device_entry(name: str, host: str, group_id: str, group_key: str, rout
     })
 
 
+def load_existing_config(path: str) -> dict[str, dict[str, str]]:
+    """Load existing endpoints from a config file, or return empty dict."""
+    try:
+        with open(path) as fh:
+            data = yaml.safe_load(fh)
+        if isinstance(data, dict) and isinstance(data.get("endpoints"), dict):
+            return data["endpoints"]
+    except (FileNotFoundError, yaml.YAMLError):
+        pass
+    return {}
+
+
 def write_config(path: str, devices: list[tuple[str, dict[str, str]]]) -> None:
     """Write the server configuration YAML file.
 
-    devices: list of (name, dict) tuples.
+    If the file already exists, existing endpoints are preserved and new
+    devices are merged in.  A device with the same name is overwritten
+    (the user is warned beforehand by step3_create_config).
     """
-    config = {"endpoints": dict(devices)}
+    existing = load_existing_config(path)
+    existing.update(dict(devices))
+    config = {"endpoints": existing}
 
     with open(path, "w") as fh:
         fh.write("#default location: /etc/MieleRESTServer.config\n")
@@ -709,6 +725,15 @@ def prompt_device_entry(defaults: dict[str, str] | None = None) -> tuple[str, di
 def step3_create_config(provisioned_devices: list[dict[str, Any]] | None = None) -> None:
     banner("Step 3: Create Server Configuration")
     provisioned_devices = provisioned_devices or []
+
+    # Show existing devices in the config file
+    config_path = "./MieleRESTServer.config"
+    existing = load_existing_config(config_path)
+    if existing:
+        print(f"  Existing devices in {config_path}:")
+        for name, entry in existing.items():
+            print(f"    - {name} ({entry.get('host', '?')})")
+        print("  New devices will be added alongside these.\n")
 
     devices = []
 

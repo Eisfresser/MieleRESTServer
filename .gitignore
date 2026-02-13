@@ -15,3 +15,6 @@ dop2rs/dop2marshal/target
 
 # user's server config
 MieleRESTServer.config
+
+# temp log file
+session.log

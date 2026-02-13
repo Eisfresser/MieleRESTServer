@@ -492,6 +492,72 @@ class TestBuildDeviceEntry(unittest.TestCase):
         self.assertEqual(config["route"], "auto")
 
 
+class TestLoadExistingConfig(unittest.TestCase):
+    def test_loads_valid_config(self) -> None:
+        import yaml
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml",
+                                         delete=False) as f:
+            f.write("#default location: /etc/MieleRESTServer.config\n")
+            yaml.dump({"endpoints": {"oven": {"host": "10.0.0.1"}}}, f)
+            path = f.name
+        try:
+            result = setup.load_existing_config(path)
+            self.assertEqual(result["oven"]["host"], "10.0.0.1")
+        finally:
+            os.unlink(path)
+
+    def test_returns_empty_for_missing_file(self) -> None:
+        self.assertEqual(setup.load_existing_config("/nonexistent/path.yaml"), {})
+
+    def test_returns_empty_for_invalid_yaml(self) -> None:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml",
+                                         delete=False) as f:
+            f.write(": : : bad yaml [[[")
+            path = f.name
+        try:
+            self.assertEqual(setup.load_existing_config(path), {})
+        finally:
+            os.unlink(path)
+
+    def test_returns_empty_for_empty_file(self) -> None:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml",
+                                         delete=False) as f:
+            path = f.name
+        try:
+            self.assertEqual(setup.load_existing_config(path), {})
+        finally:
+            os.unlink(path)
+
+    def test_returns_empty_when_endpoints_not_dict(self) -> None:
+        import yaml
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml",
+                                         delete=False) as f:
+            yaml.dump({"endpoints": "not a dict"}, f)
+            path = f.name
+        try:
+            self.assertEqual(setup.load_existing_config(path), {})
+        finally:
+            os.unlink(path)
+
+    def test_loads_multiple_devices(self) -> None:
+        import yaml
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml",
+                                         delete=False) as f:
+            f.write("#default location: /etc/MieleRESTServer.config\n")
+            yaml.dump({"endpoints": {
+                "oven": {"host": "10.0.0.1", "groupId": "G1", "groupKey": "K1", "route": "auto"},
+                "washer": {"host": "10.0.0.2", "groupId": "G2", "groupKey": "K2", "route": "auto"},
+            }}, f)
+            path = f.name
+        try:
+            result = setup.load_existing_config(path)
+            self.assertEqual(len(result), 2)
+            self.assertEqual(result["oven"]["host"], "10.0.0.1")
+            self.assertEqual(result["washer"]["host"], "10.0.0.2")
+        finally:
+            os.unlink(path)
+
+
 class TestWriteConfig(unittest.TestCase):
     def test_writes_valid_yaml(self) -> None:
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml",
@@ -535,6 +601,42 @@ class TestWriteConfig(unittest.TestCase):
         finally:
             os.unlink(path)
 
+    def test_merges_with_existing_config(self) -> None:
+        import yaml
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml",
+                                         delete=False) as f:
+            f.write("#default location: /etc/MieleRESTServer.config\n")
+            yaml.dump({"endpoints": {"oven": {
+                "host": "10.0.0.1", "groupId": "G1",
+                "groupKey": "K1", "route": "auto",
+            }}}, f)
+            path = f.name
+
+        try:
+            new_devices = [
+                ("washer", {
+                    "host": "10.0.0.2",
+                    "groupId": "G2",
+                    "groupKey": "K2",
+                    "route": "auto",
+                }),
+            ]
+            setup.write_config(path, new_devices)
+
+            with open(path) as fh:
+                lines = fh.readlines()
+                yaml_text = "".join(
+                    line for line in lines if not line.startswith("#")
+                )
+                data = yaml.safe_load(yaml_text)
+
+            # Both old and new devices present
+            self.assertEqual(len(data["endpoints"]), 2)
+            self.assertEqual(data["endpoints"]["oven"]["host"], "10.0.0.1")
+            self.assertEqual(data["endpoints"]["washer"]["host"], "10.0.0.2")
+        finally:
+            os.unlink(path)
+
     def test_multiple_devices(self) -> None:
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml",
                                          delete=False) as f:
@@ -562,6 +664,160 @@ class TestWriteConfig(unittest.TestCase):
             self.assertIn("c", data["endpoints"])
         finally:
             os.unlink(path)
+
+    def test_duplicate_name_overwrites(self) -> None:
+        import yaml
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml",
+                                         delete=False) as f:
+            f.write("#default location: /etc/MieleRESTServer.config\n")
+            yaml.dump({"endpoints": {"washer": {
+                "host": "10.0.0.1", "groupId": "OLD_G",
+                "groupKey": "OLD_K", "route": "auto",
+            }}}, f)
+            path = f.name
+
+        try:
+            new_devices = [
+                ("washer", {
+                    "host": "10.0.0.99",
+                    "groupId": "NEW_G",
+                    "groupKey": "NEW_K",
+                    "route": "auto",
+                }),
+            ]
+            setup.write_config(path, new_devices)
+
+            with open(path) as fh:
+                lines = fh.readlines()
+                yaml_text = "".join(
+                    line for line in lines if not line.startswith("#")
+                )
+                data = yaml.safe_load(yaml_text)
+
+            # Same name → overwritten, not duplicated
+            self.assertEqual(len(data["endpoints"]), 1)
+            self.assertEqual(data["endpoints"]["washer"]["host"], "10.0.0.99")
+            self.assertEqual(data["endpoints"]["washer"]["groupId"], "NEW_G")
+        finally:
+            os.unlink(path)
+
+    def test_merge_preserves_existing_and_adds_new(self) -> None:
+        """Full round-trip: existing file with 2 devices, add a 3rd."""
+        import yaml
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml",
+                                         delete=False) as f:
+            f.write("#default location: /etc/MieleRESTServer.config\n")
+            yaml.dump({"endpoints": {
+                "oven": {"host": "10.0.0.1", "groupId": "G1",
+                         "groupKey": "K1", "route": "auto"},
+                "washer": {"host": "10.0.0.2", "groupId": "G2",
+                           "groupKey": "K2", "route": "auto"},
+            }}, f)
+            path = f.name
+
+        try:
+            new_devices = [
+                ("dryer", {
+                    "host": "10.0.0.3",
+                    "groupId": "G3",
+                    "groupKey": "K3",
+                    "route": "auto",
+                }),
+            ]
+            setup.write_config(path, new_devices)
+
+            with open(path) as fh:
+                lines = fh.readlines()
+                yaml_text = "".join(
+                    line for line in lines if not line.startswith("#")
+                )
+                data = yaml.safe_load(yaml_text)
+
+            self.assertEqual(len(data["endpoints"]), 3)
+            self.assertEqual(data["endpoints"]["oven"]["host"], "10.0.0.1")
+            self.assertEqual(data["endpoints"]["washer"]["host"], "10.0.0.2")
+            self.assertEqual(data["endpoints"]["dryer"]["host"], "10.0.0.3")
+        finally:
+            os.unlink(path)
+
+
+class TestStep3ShowsExistingDevices(unittest.TestCase):
+    """Test that step3_create_config displays existing devices from the config file."""
+
+    @patch("miele_device_setup.load_existing_config")
+    @patch("builtins.input", side_effect=[
+        "dishwasher",       # device name
+        "10.0.0.5",         # IP
+        "GID",              # GroupID
+        "GKEY",             # GroupKey
+        "",                 # route (default: auto)
+        "n",                # add another? no
+        "",                 # output path (default)
+    ])
+    @patch("miele_device_setup.write_config")
+    def test_shows_existing_devices(self, mock_write: MagicMock,
+                                     _mock_input: MagicMock,
+                                     mock_load: MagicMock) -> None:
+        mock_load.return_value = {
+            "oven": {"host": "10.0.0.1"},
+            "washer": {"host": "10.0.0.2"},
+        }
+        with patch("builtins.print") as mock_print:
+            setup.step3_create_config()
+
+        printed = " ".join(str(c) for c in mock_print.call_args_list)
+        self.assertIn("oven", printed)
+        self.assertIn("10.0.0.1", printed)
+        self.assertIn("washer", printed)
+        self.assertIn("10.0.0.2", printed)
+        self.assertIn("New devices will be added alongside these", printed)
+
+    @patch("miele_device_setup.load_existing_config")
+    @patch("builtins.input", side_effect=[
+        "dryer",            # device name
+        "10.0.0.3",         # IP
+        "GID",              # GroupID
+        "GKEY",             # GroupKey
+        "",                 # route (default: auto)
+        "n",                # add another? no
+        "",                 # output path (default)
+    ])
+    @patch("miele_device_setup.write_config")
+    def test_no_message_when_no_existing(self, mock_write: MagicMock,
+                                          _mock_input: MagicMock,
+                                          mock_load: MagicMock) -> None:
+        mock_load.return_value = {}
+        with patch("builtins.print") as mock_print:
+            setup.step3_create_config()
+
+        printed = " ".join(str(c) for c in mock_print.call_args_list)
+        self.assertNotIn("New devices will be added alongside these", printed)
+
+    @patch("miele_device_setup.load_existing_config")
+    @patch("builtins.input", side_effect=[
+        "washer",           # device name
+        "",                 # route (default: auto)
+        "n",                # add another? no
+        "",                 # output path (default)
+    ])
+    @patch("miele_device_setup.write_config")
+    def test_provisioned_devices_prefilled(self, mock_write: MagicMock,
+                                            _mock_input: MagicMock,
+                                            mock_load: MagicMock) -> None:
+        """Provisioned devices from step 2 are pre-filled (no IP/key prompts)."""
+        mock_load.return_value = {}
+        provisioned = [{"ip": "10.0.0.7", "groupId": "PG", "groupKey": "PK", "ok": True}]
+
+        setup.step3_create_config(provisioned)
+
+        # write_config should have been called with the pre-filled device
+        args = mock_write.call_args
+        devices = args[0][1]  # second positional arg
+        self.assertEqual(len(devices), 1)
+        name, entry = devices[0]
+        self.assertEqual(name, "washer")
+        self.assertEqual(entry["host"], "10.0.0.7")
+        self.assertEqual(entry["groupId"], "PG")
 
 
 # ---------------------------------------------------------------------------
