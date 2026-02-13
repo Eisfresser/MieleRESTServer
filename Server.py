@@ -80,7 +80,9 @@ class MieleEndpointConfig:
         except:
             return j;
     def autodetect_route(self):
-        response=self.send_get(f"Devices")
+        response, http_response=self.cryptoProvider.sendHttpRequest(host=self.host, resourcePath="Devices");
+        if http_response.status_code != 200:
+            raise Exception(f"Error autodetecting route for {self.host}: HTTP {http_response.status_code} (check GroupID/GroupKey)");
         j=json.loads(response)
         print(j)
         if (len(j.keys())==1):

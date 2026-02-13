@@ -43,6 +43,7 @@ import subprocess
 import sys
 import textwrap
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from typing import Any
 
 try:
@@ -112,12 +113,40 @@ def prompt_yes_no(message: str, default_yes: bool = True) -> bool:
     return answer in ("y", "yes")
 
 
+def _supports_color() -> bool:
+    """Check if the terminal supports color output."""
+    return hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+
+
+def _color(text: str, code: str) -> str:
+    """Wrap text in ANSI color codes if supported."""
+    if not _supports_color():
+        return text
+    return f"\033[{code}m{text}\033[0m"
+
+
+def yellow(text: str) -> str:
+    """Yellow text for warnings and errors."""
+    return _color(text, "33")
+
+
+def green(text: str) -> str:
+    """Green text for success messages."""
+    return _color(text, "32")
+
+
+def cyan(text: str) -> str:
+    """Cyan text for important information."""
+    return _color(text, "36")
+
+
 def banner(text: str) -> None:
-    """Print a section banner."""
+    """Print a section banner with timestamp."""
     width = 60
+    timestamp = datetime.now().strftime("%H:%M:%S")
     print()
     print("=" * width)
-    print(f"  {text}")
+    print(f"  {text:<44} [{timestamp}]")
     print("=" * width)
     print()
 
@@ -377,12 +406,12 @@ def step0_reset_guidance() -> None:
 
         If the device is brand-new or has never been provisioned, you can
         skip this step.
-
-        IMPORTANT TIMING:
-        After a reset, the device takes ~90 seconds to boot its WiFi
-        module. It then opens its access point for only ~30 minutes.
-        Complete steps 1 and 2 within this window.
     """))
+    print(yellow("        IMPORTANT TIMING:"))
+    print(yellow("        After a reset, the device takes ~90 seconds to boot its WiFi"))
+    print(yellow("        module. It then opens its access point for only ~30 minutes."))
+    print(yellow("        Complete steps 1 and 2 within this window."))
+    print()
     prompt_yes_no("Have you reset the device (or is it new)?")
 
 
@@ -414,28 +443,30 @@ def provision_wifi(device_ip: str, ssid: str, password: str, security: str = "WP
                 timeout=WIFI_TIMEOUT,
                 verify=False,
             )
-            print(f"    Response: {resp.status_code} {resp.text.strip()}")
             if resp.status_code < 400:
+                print(green(f"    OK ({resp.status_code})"))
                 success = True
+            else:
+                print(yellow(f"    Error: {resp.status_code}"))
         except requests.RequestException as exc:
-            print(f"    Failed: {exc}")
+            print(yellow(f"    Failed: {exc}"))
 
     return success
 
 
 def step1_provision_wifi() -> bool:
     banner("Step 1: Provision WiFi")
+    print(cyan('  Connect your computer to the Miele device\'s access point'))
+    print(cyan('  (SSID starting with "Miele@home").'))
+    print()
     print(textwrap.dedent("""\
-        Connect your computer to the Miele device's own access point
-        (SSID starting with "Miele@home").
-
         WiFi password for the Miele AP:
           - SSID "Miele@home" (no suffix) -> password: secured-by-tls
           - SSID "Miele@home-XXX"         -> password: device serial number
                                              (from the sticker on the appliance)
-
-        REMINDER: The AP is only available for ~30 minutes after a reset.
-
+    """))
+    print(yellow("  REMINDER: The AP is only available for ~30 minutes after a reset."))
+    print(textwrap.dedent("""
         If the Miele device runs its own DHCP server, its IP is your
         default gateway. If you are running your own DHCP server
         (e.g. dnsmasq), the Miele's IP is whatever was assigned to it.
@@ -489,15 +520,15 @@ def step1_provision_wifi() -> bool:
 
     ok = provision_wifi(device_ip, ssid, password, security)
     if ok:
-        print("\n  WiFi provisioning sent successfully.")
+        print(green("\n  WiFi provisioning sent successfully."))
         print("  The device should now disconnect its AP and join the target WiFi.")
         print()
-        print("  TIP: Assign a static IP or DHCP reservation on your router for")
-        print("  the Miele device now. This prevents IP changes from breaking the")
-        print("  server configuration later.")
+        print(cyan("  TIP: Assign a static IP or DHCP reservation on your router for"))
+        print(cyan("  the Miele device now. This prevents IP changes from breaking the"))
+        print(cyan("  server configuration later."))
     else:
-        print("\n  WARNING: Both HTTP and HTTPS attempts failed.")
-        print("  Check the device IP and ensure you are connected to the Miele AP.")
+        print(yellow("\n  WARNING: Both HTTP and HTTPS attempts failed."))
+        print(yellow("  Check the device IP and ensure you are connected to the Miele AP."))
 
     return ok
 
@@ -540,12 +571,14 @@ def provision_keys(device_ip: str, keys_json: str) -> bool:
                 headers={"Content-Type": "application/json"},
                 timeout=KEY_TIMEOUT,
             )
-            print(f"    Response: {resp.status_code} {resp.text.strip()}")
             if resp.status_code < 400:
+                print(green(f"    OK ({resp.status_code})"))
                 success = True
                 break
+            else:
+                print(yellow(f"    Error: {resp.status_code}"))
         except requests.RequestException as exc:
-            print(f"    Failed: {exc}")
+            print(yellow(f"    Failed: {exc}"))
         if attempt < KEY_RETRIES:
             time.sleep(1)
 
@@ -564,12 +597,14 @@ def provision_keys(device_ip: str, keys_json: str) -> bool:
                 timeout=KEY_TIMEOUT,
                 verify=False,
             )
-            print(f"    Response: {resp.status_code} {resp.text.strip()}")
             if resp.status_code < 400:
+                print(green(f"    OK ({resp.status_code})"))
                 success = True
                 break
+            else:
+                print(yellow(f"    Error: {resp.status_code}"))
         except requests.RequestException as exc:
-            print(f"    Failed: {exc}")
+            print(yellow(f"    Failed: {exc}"))
         if attempt < KEY_RETRIES:
             time.sleep(1)
 
@@ -578,10 +613,10 @@ def provision_keys(device_ip: str, keys_json: str) -> bool:
 
 def step2_provision_keys() -> dict[str, Any]:
     banner("Step 2: Provision Cryptographic Keys")
+    print(cyan("  Now connect your computer to the SAME WiFi network that you"))
+    print(cyan("  told the Miele appliance to join in step 1."))
+    print()
     print(textwrap.dedent("""\
-        Now connect your computer to the SAME WiFi network that you
-        told the Miele appliance to join in step 1.
-
         The Miele appliance has a NEW IP on this network (different from
         step 1!), assigned by your home router.
     """))
@@ -642,10 +677,10 @@ def step2_provision_keys() -> dict[str, Any]:
     info = generate_keys()
     keys_json = info.to_pairing_json()
 
-    print("\n  Generated keys:")
-    print(f"    GroupID:  {info.groupid}")
-    print(f"    GroupKey: {info.groupkey.hex().upper()}")
-    print("\n  Save these — you will need them for the server configuration.\n")
+    print(cyan("\n  Generated keys:"))
+    print(cyan(f"    GroupID:  {info.groupid}"))
+    print(cyan(f"    GroupKey: {info.groupkey.hex().upper()}"))
+    print(cyan("\n  Save these — you will need them for the server configuration.\n"))
 
     requests.packages.urllib3.disable_warnings(
         requests.packages.urllib3.exceptions.InsecureRequestWarning
@@ -653,11 +688,11 @@ def step2_provision_keys() -> dict[str, Any]:
 
     ok = provision_keys(device_ip, keys_json)
     if ok:
-        print("\n  Key provisioning sent successfully.")
+        print(green("\n  Key provisioning sent successfully."))
         print("  The device will now require encrypted/signed communication.")
     else:
-        print("\n  WARNING: Both HTTP and HTTPS attempts failed.")
-        print("  Check the device IP and network connectivity.")
+        print(yellow("\n  WARNING: Both HTTP and HTTPS attempts failed."))
+        print(yellow("  Check the device IP and network connectivity."))
 
     return {
         "ip": device_ip,
@@ -708,7 +743,7 @@ def write_config(path: str, devices: list[tuple[str, dict[str, str]]]) -> None:
         fh.write("#default location: /etc/MieleRESTServer.config\n")
         yaml.dump(config, fh, default_flow_style=False, sort_keys=False)
 
-    print(f"\n  Configuration written to: {path}")
+    print(green(f"\n  Configuration written to: {path}"))
 
 
 def prompt_device_entry(defaults: dict[str, str] | None = None) -> tuple[str, dict[str, str]]:
@@ -746,21 +781,10 @@ def step3_create_config(provisioned_devices: list[dict[str, Any]] | None = None)
             name, dev["ip"], dev["groupId"], dev["groupKey"], route,
         ))
 
-    # Prompt for additional devices
-    while True:
-        if devices:
-            if not prompt_yes_no("Add another device?", default_yes=False):
-                break
-        elif not provisioned_devices:
-            print("  Enter device details manually.\n")
-
-        if not devices and not provisioned_devices:
-            devices.append(prompt_device_entry())
-        elif not devices:
-            # We had provisioned devices but somehow ended up empty — shouldn't happen
-            break
-        else:
-            devices.append(prompt_device_entry())
+    # If nothing was provisioned, prompt for one device manually
+    if not devices:
+        print("  Enter device details manually.\n")
+        devices.append(prompt_device_entry())
 
     if not devices:
         print("  No devices configured. Skipping config file creation.")
@@ -805,14 +829,11 @@ def main() -> None:
     if run_step1:
         step1_provision_wifi()
 
-    # Step 2 – may provision multiple devices
+    # Step 2
     run_step2 = prompt_yes_no("Run Step 2 (provision cryptographic keys)?")
     if run_step2:
-        while True:
-            result = step2_provision_keys()
-            provisioned_devices.append(result)
-            if not prompt_yes_no("Provision another device?", default_yes=False):
-                break
+        result = step2_provision_keys()
+        provisioned_devices.append(result)
 
     # Step 3
     if prompt_yes_no("Run Step 3 (create server config)?"):

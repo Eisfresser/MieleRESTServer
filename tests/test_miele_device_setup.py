@@ -751,7 +751,6 @@ class TestStep3ShowsExistingDevices(unittest.TestCase):
         "GID",              # GroupID
         "GKEY",             # GroupKey
         "",                 # route (default: auto)
-        "n",                # add another? no
         "",                 # output path (default)
     ])
     @patch("miele_device_setup.write_config")
@@ -779,7 +778,6 @@ class TestStep3ShowsExistingDevices(unittest.TestCase):
         "GID",              # GroupID
         "GKEY",             # GroupKey
         "",                 # route (default: auto)
-        "n",                # add another? no
         "",                 # output path (default)
     ])
     @patch("miele_device_setup.write_config")
@@ -797,7 +795,6 @@ class TestStep3ShowsExistingDevices(unittest.TestCase):
     @patch("builtins.input", side_effect=[
         "washer",           # device name
         "",                 # route (default: auto)
-        "n",                # add another? no
         "",                 # output path (default)
     ])
     @patch("miele_device_setup.write_config")
